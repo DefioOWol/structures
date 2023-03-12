@@ -1,75 +1,76 @@
 """Summary."""
-from math import sqrt
+from typing import Optional
 from random import random
 
 import numpy as np
 
 
-ANTS = 1
-AGES = 1
-RHO = 0.1
-ALPHA = 1
-BETA = 1
-PH_Q = 1
-PH_MIN = 0.001
-PH_MAX = 1
-ELITE = 1
-
-
-def _dist(first: tuple[int, int], second: tuple[int, int]):
+def aco(dist: np.ndarray, start: int, end: int, salesman: bool=True,
+        *, ants: int=1, ages: int=1, rho: float=0.1, a: float=1,
+        b: float=1, q: float=1, ph_min: float=0.01, ph_max: float=1,
+        elite: int=0) -> tuple[tuple[int], Optional[float]]:
     """Summary."""
-    return sqrt((first[0] - second[0]) ** 2 + (first[1] - second[1]) ** 2)
+    if salesman:
+        run = lambda visited, available: len(visited) < available
+    else:
+        run = lambda visited, _: visited[-1] != end
 
+    dist = np.where(np.isnan(dist), np.inf, dist)
+    num = dist.shape[0]
+    ph = np.ones((num, num)) * ph_max
 
-def aco(vertexes: tuple[tuple[int, int]],
-        start: int, end: int) -> tuple[tuple[int], int]:
-    """Summary."""
-    num = len(vertexes)
-    dist = np.zeros((num, num))
-    for i in range(num):
-        for j in range(num):
-            dist[i, j] = _dist(vertexes[i], vertexes[j])
-    ph = np.ones((num, num)) * PH_MAX
+    best_route, best_dist = tuple(), np.inf
 
-    best_route = np.nan
-    best_dist = np.inf
+    vertexes = set(range(num)) - {end if salesman else np.nan} | {start}
+    available = len(vertexes)
+    for _ in range(ages):
 
-    vertexes_id = set(range(num)) - {end} | {start}
-    available = len(vertexes_id)
-    for _ in range(AGES):
-        for _ in range(ANTS):
+        ant_routes = ant_dists = tuple()
+        for _ in range(ants):
 
             visited = (start,)
-            while len(visited) < available:
+            while run(visited, available):
 
-                unvisited = tuple(vertexes_id - set(visited))
-                attract = (ph[visited[-1], unvisited] ** ALPHA
-                           * dist[visited[-1], unvisited] ** -BETA)
-                attract /= np.sum(attract)
+                unvisited = tuple(vertexes - set(visited))
+                attract = (ph[visited[-1], unvisited] ** a
+                           * (1 / dist[visited[-1], unvisited]) ** b)
+                general = np.sum(attract)
+                attract /= general if general else 1
 
                 rand = random()
                 for i in range(attract.size):
                     attract[i] = np.sum(attract[:i + 1])
-                    if rand <= attract[i]:
+                    if rand < attract[i]:
                         next_vertex = unvisited[i]
                         break
+                else:
+                    break
 
                 visited += (next_vertex,)
 
-            visited += (end,)
-            route_dist = sum([dist[visited[i], visited[i + 1]]
-                              for i in range(available)])
+            else:
+                num = len(visited)
+                visited += (end,)
+                route_dist = sum([dist[visited[i], visited[i + 1]]
+                                  for i in range(num)])
+                ant_routes += (visited,)
+                ant_dists += (route_dist,)
 
-            if route_dist < best_dist:
-                best_route = visited
-                best_dist = route_dist
+                if route_dist < best_dist:
+                    best_route, best_dist = visited, route_dist
 
-            for i in range(available):
-                ph[visited[i], visited[i + 1]] += (PH_Q / route_dist)
+        ph *= (1 - rho)
 
+        for i, route in enumerate(ant_routes):
+            rel_q = (q / ant_dists[i]) if ant_dists[i] else np.inf
+            for j in range(len(route) - 1):
+                ph[route[j], route[j + 1]] += rel_q
+
+        rel_q = (q / best_dist * elite) if best_dist else np.inf
         for i in range(len(best_route) - 1):
-            ph[best_route[i], best_route[i + 1]] += (PH_Q / best_dist * ELITE)
+            ph[best_route[i], best_route[i + 1]] += rel_q
 
-        ph = np.clip(ph, PH_MIN, PH_MAX) * (1 - RHO)
+        ph = np.clip(ph, ph_min, ph_max)
 
-    return (best_route, best_dist)
+    return (best_route if salesman else best_route[:-1],
+            np.nan if np.isinf(best_dist) else best_dist)
